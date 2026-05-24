@@ -1,151 +1,101 @@
-# 🌐 AI Image Language Translator
+# 🌍 TourTranslate AI
 
-> Detect multilingual text in images, translate it to English, and replace it — live in Streamlit Community Cloud.
+## 🧠 AI-Powered Tourist Image Text Translator
 
----
+TourTranslate AI is a Streamlit-based computer vision application designed to help international travelers understand foreign-language text in real-world environments.
 
-## 📁 Project Structure
+Tourists often face difficulties understanding street signs, restaurant menus, transportation boards, and public notices in foreign countries. This application solves that problem instantly.
 
-```
-your-repo/
-├── app.py                   ← Main Streamlit application
-├── requirements.txt         ← Python dependencies
-├── packages.txt             ← System (apt) dependencies  ← CRITICAL for Cloud
-├── .streamlit/
-│   └── config.toml          ← Streamlit theme + server config
-└── README.md
-```
+Users can simply upload an image of any signboard, and the system will detect, translate, and replace the text into English directly on the image.
 
 ---
 
-## 🚀 Deploy to Streamlit Community Cloud (Step-by-Step)
+## 🚀 Problem Statement
 
-### Step 1 — Push to GitHub
+When traveling to a foreign country, tourists often encounter:
 
-```bash
-git init
-git add .
-git commit -m "Initial commit — AI Image Translator"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
-git push -u origin main
-```
+- Language barriers in public signs
+- Difficulty understanding transport information
+- Confusion in restaurants and shops
+- Misinterpretation of important instructions
 
-### Step 2 — Create Streamlit Cloud App
-
-1. Go to **https://share.streamlit.io**
-2. Sign in with your GitHub account
-3. Click **"New app"**
-4. Fill in:
-   - **Repository**: `YOUR_USERNAME/YOUR_REPO_NAME`
-   - **Branch**: `main`
-   - **Main file path**: `app.py`
-5. Click **"Deploy!"**
-
-> ⏳ First deploy takes **5–10 minutes** — PyTorch + EasyOCR models are large.
-> Subsequent cold starts take ~40 seconds (model loading).
+This can lead to confusion, delays, and poor travel experiences.
 
 ---
 
-## ⚙️ Why Each File Matters on Streamlit Cloud
+## 💡 Solution
 
-| File | Purpose |
-|------|---------|
-| `requirements.txt` | Python packages installed via pip |
-| `packages.txt` | **Critical** — installs `libgl1`, `fonts-dejavu-core`, etc. via apt before pip. Without this, OpenCV and font rendering fail silently. |
-| `.streamlit/config.toml` | Sets dark theme, disables CORS issues, enables fast reruns |
+TourTranslate AI allows users to:
 
----
-
-## 🔧 Cloud-Specific Optimisations in `app.py`
-
-| Change | Why |
-|--------|-----|
-| `gpu=False` in EasyOCR | Streamlit Cloud has no GPU |
-| `MAX_IMAGE_DIM = 1200` | Free tier has ~800 MB RAM limit |
-| Font downloaded to `/tmp/` | `/tmp` is writable on Cloud; home dir may not be |
-| `packages.txt` includes `fonts-dejavu-core` | System font path `/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf` is used first (no download needed) |
-| `opencv-python-headless` | Headless build avoids Qt/GTK GUI libs that aren't available on Cloud |
-| `@st.cache_resource` for OCR reader | Model loaded once per server instance, not per user session |
-| Session state `trigger` flag | Prevents double-processing on Streamlit reruns |
+📸 Upload any image containing text  
+🔍 Automatically detect text using OCR  
+🌐 Translate detected text into English  
+🖼️ Replace original text with translated version  
+📥 Download translated image instantly  
 
 ---
 
-## 🌍 Supported Languages
+## 🏗️ System Architecture
 
-| Language   | Detection |
-|------------|-----------|
-| Spanish    | ✅ |
-| French     | ✅ |
-| German     | ✅ |
-| Italian    | ✅ |
-| Portuguese | ✅ |
-| Dutch      | ✅ |
-| Japanese   | ✅ |
-| Korean     | ✅ |
-| Arabic     | ✅ |
-| Chinese (Simplified) | ✅ |
-| English    | ✅ (passthrough) |
-
-> **Sinhala** requires a separate EasyOCR community model not bundled by default.
-> Add `'si'` to `OCR_LANGS` in `app.py` if you install it manually.
+Image Upload  
+→ OCR Text Detection  
+→ Language Identification  
+→ Translation to English  
+→ Text Removal (Image Processing)  
+→ Text Rendering on Image  
+→ Output Display  
 
 ---
 
-## 🏗️ Pipeline
+## 🛠️ Tech Stack
 
-```
-Upload Image
-     ↓
-Resize to ≤ 1200px (saves Cloud RAM)
-     ↓
-EasyOCR  →  text + bounding boxes + confidence
-     ↓
-deep-translator GoogleTranslator(source="auto", target="en")
-     ↓
-cv2.inpaint(INPAINT_TELEA)  →  remove original text
-     ↓
-PIL ImageDraw  →  render translated text (auto font size)
-     ↓
-Streamlit display + PNG download
-```
+- Streamlit (Frontend UI)
+- EasyOCR (Text Detection)
+- deep-translator (Translation Engine)
+- OpenCV (Image Processing)
+- Pillow (Image Rendering)
+- NumPy (Data Processing)
 
 ---
 
-## 🐛 Troubleshooting
+## 🌐 Supported Languages
 
-**"ModuleNotFoundError: cv2"**
-→ Check `packages.txt` has `libgl1` and `libglib2.0-0`. These must exist.
+TourTranslate AI supports translation from:
 
-**"OSError: cannot open resource" (font)**
-→ Ensure `packages.txt` has `fonts-dejavu-core`. The app also auto-downloads the font to `/tmp` as a fallback.
+- Spanish 🇪🇸  
+- French 🇫🇷  
+- German 🇩🇪  
+- Italian 🇮🇹  
+- Portuguese 🇵🇹  
+- Dutch 🇳🇱  
+- Japanese 🇯🇵  
+- Korean 🇰🇷  
+- Sinhala 🇱🇰  
+- Arabic 🇸🇦  
 
-**App crashes with MemoryError**
-→ Image too large. Lower `MAX_IMAGE_DIM` to `800` in `app.py`.
-
-**Slow first load**
-→ Normal — EasyOCR downloads ~200 MB of model weights on first boot.
-→ Free tier cold starts add ~30–60 s on top of this.
-
-**Translation fails / returns original text**
-→ `deep-translator` calls Google's free endpoint. If the app is deployed in a region where Google is blocked, try replacing with `MyMemoryTranslator` from the same library.
-
----
-
-## 📦 Tech Stack
-
-| Library | Role |
-|---------|------|
-| Streamlit | Web UI |
-| EasyOCR | OCR + text detection |
-| deep-translator | Free translation wrapper |
-| opencv-python-headless | Inpainting + image ops |
-| Pillow | Text rendering |
-| NumPy | Array operations |
-| PyTorch (CPU) | EasyOCR neural net backend |
+➡️ All translated into English
 
 ---
 
-## 📄 License
+## 📷 How It Works
 
-MIT — free to use, modify, and deploy.
+1. Upload an image (street sign, menu, board, etc.)
+2. System detects all text using OCR
+3. Each text segment is translated to English
+4. Original text is removed from image
+5. Translated text is placed back into image
+6. Final image is displayed and available for download
+
+---
+
+## 🎯 Use Cases
+
+- ✈️ Tourism assistance
+- 🏙️ Street navigation
+- 🍽️ Restaurant menu translation
+- 🚉 Transport signage understanding
+- 🏨 Hotel & travel communication
+- 📸 Travel photography enhancement
+
+---
+
