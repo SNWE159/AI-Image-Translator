@@ -3,7 +3,7 @@ AI Image Language Translator
 Streamlit Community Cloud — Production Build
 ─────────────────────────────────────────────
 Stack : EasyOCR · deep-translator · OpenCV-headless · Pillow · Streamlit
-Author: AI Image Translator Project
+Fix   : Separate EasyOCR readers per language group (EasyOCR restriction)
 """
 
 import streamlit as st
@@ -188,21 +188,30 @@ LANG_NAMES = {
     "ja": "Japanese",   "ko": "Korean",     "ar": "Arabic",
 }
 
-# EasyOCR language codes to load (keep list small to save memory on free tier)
-OCR_LANGS = ["en", "es", "fr", "de", "it", "pt", "nl", "ja", "ko", "ar"]
+# ── EasyOCR language groups ────────────────────────────────────────────────────
+# IMPORTANT: EasyOCR does NOT allow mixing Latin + CJK/Arabic in one Reader.
+# Each group must be loaded as a separate Reader instance.
+#
+#   Group 1 — Latin scripts  : English + European languages
+#   Group 2 — Japanese       : ja + en  (must be isolated)
+#   Group 3 — Korean         : ko + en  (must be isolated)
+#   Group 4 — Arabic         : ar + en  (must be isolated)
+# ──────────────────────────────────────────────────────────────────────────────
+OCR_GROUP_LATIN   = ["en", "es", "fr", "de", "it", "pt", "nl"]
+OCR_GROUP_JAPANESE = ["ja", "en"]
+OCR_GROUP_KOREAN   = ["ko", "en"]
+OCR_GROUP_ARABIC   = ["ar", "en"]
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FONT  ─ download DejaVu Bold once into /tmp (writable on Streamlit Cloud)
+# FONT  ─ use system font first, then download to /tmp as fallback
 # ══════════════════════════════════════════════════════════════════════════════
 FONT_URL  = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans-Bold.ttf"
 FONT_PATH = "/tmp/DejaVuSans-Bold.ttf"
 
 def ensure_font() -> str:
     """Return path to a bold TTF; download to /tmp if not present."""
-    # 1. Try /tmp (persists across reruns in same session)
     if os.path.exists(FONT_PATH):
         return FONT_PATH
-    # 2. Try common Linux system paths (may exist on the Cloud image)
     system_paths = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -211,25 +220,36 @@ def ensure_font() -> str:
     for p in system_paths:
         if os.path.exists(p):
             return p
-    # 3. Download from GitHub (one-time, ~170 KB)
     try:
         urllib.request.urlretrieve(FONT_URL, FONT_PATH)
         return FONT_PATH
     except Exception:
-        return ""   # Will fall back to PIL default
+        return ""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CACHED RESOURCES
 # ══════════════════════════════════════════════════════════════════════════════
 @st.cache_resource(show_spinner=False)
-def load_ocr_reader() -> easyocr.Reader:
+def load_ocr_readers() -> dict:
     """
-    Load EasyOCR once and keep it in memory for all sessions.
-    gpu=False  → required on Streamlit Community Cloud (CPU only).
-    verbose=False → suppresses console noise.
+    Load 4 separate EasyOCR readers — one per language group.
+
+    Why separate readers?
+    EasyOCR raises ValueError if you mix Latin scripts with
+    Japanese / Korean / Arabic in a single Reader() call.
+    Loading them separately is the only supported way.
+
+    gpu=False  → Streamlit Community Cloud has no GPU.
+    verbose=False → suppress download/log noise in Cloud logs.
     """
-    return easyocr.Reader(OCR_LANGS, gpu=False, verbose=False)
+    readers = {
+        "latin":    easyocr.Reader(OCR_GROUP_LATIN,    gpu=False, verbose=False),
+        "japanese": easyocr.Reader(OCR_GROUP_JAPANESE, gpu=False, verbose=False),
+        "korean":   easyocr.Reader(OCR_GROUP_KOREAN,   gpu=False, verbose=False),
+        "arabic":   easyocr.Reader(OCR_GROUP_ARABIC,   gpu=False, verbose=False),
+    }
+    return readers
 
 
 @st.cache_data(show_spinner=False)
@@ -257,27 +277,74 @@ def cv_to_pil(cv_img: np.ndarray) -> Image.Image:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# OCR
+# OCR  ─ run all 4 readers, merge & deduplicate results
 # ══════════════════════════════════════════════════════════════════════════════
-def run_ocr(reader: easyocr.Reader, pil_img: Image.Image) -> list:
+def run_ocr(readers: dict, pil_img: Image.Image) -> list:
     """
-    Run EasyOCR on a PIL image.
-    Returns list of dicts: {text, bbox:(x1,y1,x2,y2), confidence}
+    Run every language-group reader on the image and merge results.
+    Duplicates (same region detected by multiple readers) are removed
+    using IoU-based deduplication — highest-confidence box wins.
     """
-    cv_img   = pil_to_cv(pil_img)
-    raw      = reader.readtext(cv_img, detail=1, paragraph=False)
-    results  = []
-    for (bbox_pts, text, conf) in raw:
-        if conf < 0.15 or not text.strip():
+    cv_img = pil_to_cv(pil_img)
+    all_detections = []
+
+    for group_name, reader in readers.items():
+        try:
+            raw = reader.readtext(cv_img, detail=1, paragraph=False)
+            for (bbox_pts, text, conf) in raw:
+                if conf < 0.15 or not text.strip():
+                    continue
+                xs = [p[0] for p in bbox_pts]
+                ys = [p[1] for p in bbox_pts]
+                all_detections.append({
+                    "text":       text.strip(),
+                    "bbox":       (int(min(xs)), int(min(ys)),
+                                   int(max(xs)), int(max(ys))),
+                    "confidence": conf,
+                    "group":      group_name,
+                })
+        except Exception:
+            # If one reader fails, continue with the others
             continue
-        xs = [p[0] for p in bbox_pts]
-        ys = [p[1] for p in bbox_pts]
-        results.append({
-            "text":       text.strip(),
-            "bbox":       (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))),
-            "confidence": conf,
-        })
-    return results
+
+    return deduplicate_detections(all_detections)
+
+
+def deduplicate_detections(detections: list, iou_threshold: float = 0.5) -> list:
+    """
+    Remove overlapping boxes from multiple readers.
+    Sort by confidence (desc) and keep boxes that don't
+    overlap more than iou_threshold with an already-kept box.
+    """
+    if not detections:
+        return []
+
+    detections = sorted(detections, key=lambda x: x["confidence"], reverse=True)
+    kept = []
+
+    for det in detections:
+        x1, y1, x2, y2 = det["bbox"]
+        is_duplicate = False
+
+        for k in kept:
+            kx1, ky1, kx2, ky2 = k["bbox"]
+            # Intersection area
+            ix1 = max(x1, kx1);  iy1 = max(y1, ky1)
+            ix2 = min(x2, kx2);  iy2 = min(y2, ky2)
+            inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+            if inter == 0:
+                continue
+            area1 = max(1, (x2 - x1) * (y2 - y1))
+            area2 = max(1, (kx2 - kx1) * (ky2 - ky1))
+            iou   = inter / (area1 + area2 - inter)
+            if iou > iou_threshold:
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            kept.append(det)
+
+    return kept
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -285,9 +352,9 @@ def run_ocr(reader: easyocr.Reader, pil_img: Image.Image) -> list:
 # ══════════════════════════════════════════════════════════════════════════════
 def translate_text(text: str) -> str:
     """
-    Translate text to English using deep-translator's GoogleTranslator.
-    source='auto'  → language auto-detection (no API key needed).
-    Falls back to original text on any error.
+    Translate text to English using deep-translator GoogleTranslator.
+    source='auto' → language auto-detection, no API key needed.
+    Returns original text on any error.
     """
     try:
         if not text.strip():
@@ -299,20 +366,20 @@ def translate_text(text: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TEXT REMOVAL (OpenCV inpainting)
+# TEXT REMOVAL  ─ OpenCV inpainting
 # ══════════════════════════════════════════════════════════════════════════════
 def remove_text_inpaint(cv_img: np.ndarray, detections: list) -> np.ndarray:
     """
-    Build a binary mask over all bounding boxes and use INPAINT_TELEA
-    to reconstruct the background behind each text region.
+    Build a binary mask over all text bounding boxes and use
+    INPAINT_TELEA to reconstruct the background cleanly.
     """
     mask = np.zeros(cv_img.shape[:2], dtype=np.uint8)
     h, w = cv_img.shape[:2]
     for det in detections:
         x1, y1, x2, y2 = det["bbox"]
         pad = 5
-        mask[max(0, y1-pad):min(h, y2+pad),
-             max(0, x1-pad):min(w, x2+pad)] = 255
+        mask[max(0, y1 - pad):min(h, y2 + pad),
+             max(0, x1 - pad):min(w, x2 + pad)] = 255
     return cv2.inpaint(cv_img, mask, inpaintRadius=6, flags=cv2.INPAINT_TELEA)
 
 
@@ -320,7 +387,7 @@ def remove_text_inpaint(cv_img: np.ndarray, detections: list) -> np.ndarray:
 # FONT UTILITIES
 # ══════════════════════════════════════════════════════════════════════════════
 def get_font(size: int) -> ImageFont.FreeTypeFont:
-    """Load DejaVu Bold at `size`; fall back to PIL default."""
+    """Load DejaVu Bold TTF at given size; fall back to PIL default."""
     fp = cached_font_path()
     if fp:
         try:
@@ -331,13 +398,13 @@ def get_font(size: int) -> ImageFont.FreeTypeFont:
 
 
 def fit_text_in_box(draw: ImageDraw.ImageDraw, text: str, box_w: int, box_h: int):
-    """Binary-search the largest font size where `text` fits in (box_w × box_h)."""
+    """Find the largest font size where text fits inside (box_w × box_h)."""
     for size in range(min(box_h, 48), 5, -1):
         font = get_font(size)
         try:
             bb = draw.textbbox((0, 0), text, font=font)
             tw, th = bb[2] - bb[0], bb[3] - bb[1]
-        except AttributeError:                     # Pillow < 9.2
+        except AttributeError:          # Pillow < 9.2 fallback
             tw, th = draw.textsize(text, font=font)
         if tw <= box_w and th <= box_h:
             return font, tw, th
@@ -349,9 +416,9 @@ def fit_text_in_box(draw: ImageDraw.ImageDraw, text: str, box_w: int, box_h: int
 # ══════════════════════════════════════════════════════════════════════════════
 def render_translated_text(pil_img: Image.Image, detections: list) -> Image.Image:
     """
-    Draw translated text back into every bounding box:
-      1. White fill rectangle (for legibility)
-      2. Black text, centered & auto-sized
+    For each detection draw:
+      1. White filled rectangle (background for readability)
+      2. Black auto-sized text, centered inside the bounding box
     """
     img  = pil_img.copy().convert("RGB")
     draw = ImageDraw.Draw(img)
@@ -367,13 +434,11 @@ def render_translated_text(pil_img: Image.Image, detections: list) -> Image.Imag
 
         font, tw, th = fit_text_in_box(draw, translated, box_w, box_h)
 
-        # White background fill
         pad = 2
         draw.rectangle(
             [x1 - pad, y1 - pad, x2 + pad, y2 + pad],
             fill=(255, 255, 255),
         )
-        # Centered text
         tx = x1 + (box_w - tw) // 2
         ty = y1 + (box_h - th) // 2
         draw.text((tx, ty), translated, fill=(15, 15, 15), font=font)
@@ -385,11 +450,11 @@ def render_translated_text(pil_img: Image.Image, detections: list) -> Image.Imag
 # FULL PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 def process_image(pil_img: Image.Image,
-                  reader: easyocr.Reader,
+                  readers: dict,
                   progress_cb=None):
     """
-    Orchestrate the full OCR → translate → inpaint → render pipeline.
-    Returns (result_pil_image, detections_list).
+    Full pipeline: preprocess → OCR → translate → inpaint → render.
+    Returns (result_PIL_image, detections_list).
     """
     def step(msg: str, pct: int):
         if progress_cb:
@@ -398,8 +463,8 @@ def process_image(pil_img: Image.Image,
     step("🔬 Preprocessing image…", 5)
     pil_img = resize_if_large(pil_img)
 
-    step("🔍 Detecting text (EasyOCR)…", 20)
-    detections = run_ocr(reader, pil_img)
+    step("🔍 Detecting text with EasyOCR…", 20)
+    detections = run_ocr(readers, pil_img)
 
     if not detections:
         step("⚠️ No text detected in image.", 100)
@@ -431,7 +496,10 @@ def detections_html(detections: list) -> str:
         orig  = det["text"].replace("<", "&lt;").replace(">", "&gt;")
         trans = det.get("translated", "—").replace("<", "&lt;").replace(">", "&gt;")
         same  = orig.lower() == trans.lower()
-        trans_cell = f'<span style="color:var(--text-muted);font-style:italic;">{trans} (unchanged)</span>' if same else trans
+        trans_cell = (
+            f'<span style="color:var(--text-muted);font-style:italic;">'
+            f'{trans} (unchanged)</span>'
+        ) if same else trans
         rows += f"""
         <tr>
           <td><span class="badge badge-cyan">{i}</span></td>
@@ -442,7 +510,8 @@ def detections_html(detections: list) -> str:
               <div class="conf-bar-wrap">
                 <div class="conf-bar" style="width:{conf}%"></div>
               </div>
-              <span style="font-size:.72rem;color:#64748b;font-family:'JetBrains Mono',monospace">{conf}%</span>
+              <span style="font-size:.72rem;color:#64748b;
+                    font-family:'JetBrains Mono',monospace">{conf}%</span>
             </div>
           </td>
         </tr>"""
@@ -469,7 +538,7 @@ def img_to_bytes(pil_img: Image.Image) -> bytes:
 # ══════════════════════════════════════════════════════════════════════════════
 def main():
 
-    # ── Hero header ─────────────────────────────────────────────────────────
+    # ── Hero header ──────────────────────────────────────────────────────────
     st.markdown("""
     <div class="hero-header">
         <div class="hero-title">🌐 AI Image Language Translator</div>
@@ -478,7 +547,7 @@ def main():
         </div>
     </div>""", unsafe_allow_html=True)
 
-    # ── Language badges ──────────────────────────────────────────────────────
+    # ── Language badges ───────────────────────────────────────────────────────
     badges = " ".join(
         f'<span class="badge badge-purple">{name}</span>'
         for name in LANG_NAMES.values()
@@ -488,14 +557,16 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # ── Load OCR model ───────────────────────────────────────────────────────
-    with st.spinner("⏳ Loading OCR model — this takes ~40 s on first boot…"):
-        reader = load_ocr_reader()
+    # ── Load OCR readers ──────────────────────────────────────────────────────
+    # 4 separate readers are needed due to EasyOCR language grouping rules.
+    # Cached with @st.cache_resource so they load only once per server instance.
+    with st.spinner("⏳ Loading OCR models — first boot takes ~60–90 s…"):
+        readers = load_ocr_readers()
 
-    # ── Two-column layout ────────────────────────────────────────────────────
+    # ── Two-column layout ─────────────────────────────────────────────────────
     left, right = st.columns([1, 1], gap="large")
 
-    # ── LEFT: upload + controls ──────────────────────────────────────────────
+    # ── LEFT: upload + controls ───────────────────────────────────────────────
     with left:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("#### 📤 Upload Image")
@@ -509,7 +580,7 @@ def main():
         if uploaded:
             pil_orig = Image.open(uploaded).convert("RGB")
             st.image(pil_orig, caption="Original Image", use_container_width=True)
-            w, h = pil_orig.size
+            w, h    = pil_orig.size
             size_kb = round(len(uploaded.getvalue()) / 1024, 1)
             st.markdown(f"""
             <div class="metric-row">
@@ -529,7 +600,7 @@ def main():
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # ── Translate button ─────────────────────────────────────────────────
+        # ── Translate button ──────────────────────────────────────────────────
         if uploaded:
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown("""
@@ -554,11 +625,10 @@ def main():
             run_clicked = st.button("🚀 Translate Image", key="run_btn")
             st.markdown('</div>', unsafe_allow_html=True)
 
-            # Store trigger in session_state so Streamlit reruns work correctly
             if run_clicked:
                 st.session_state["trigger"] = True
 
-    # ── RIGHT: placeholder or result ─────────────────────────────────────────
+    # ── RIGHT: placeholder when no image uploaded ─────────────────────────────
     if not uploaded:
         with right:
             st.markdown("""
@@ -571,11 +641,10 @@ def main():
                 </div>
             </div>""", unsafe_allow_html=True)
 
-    # ── Processing ───────────────────────────────────────────────────────────
+    # ── Processing ────────────────────────────────────────────────────────────
     if uploaded and st.session_state.get("trigger"):
 
-        # Reset trigger so re-uploading a new file doesn't auto-process
-        st.session_state["trigger"] = False
+        st.session_state["trigger"] = False  # reset so it doesn't re-run on next rerender
 
         progress_bar = st.progress(0)
         status_text  = st.empty()
@@ -590,16 +659,17 @@ def main():
 
         try:
             pil_orig = Image.open(uploaded).convert("RGB")
-            result_img, detections = process_image(pil_orig, reader, progress_cb)
+            result_img, detections = process_image(pil_orig, readers, progress_cb)
             time.sleep(0.25)
             progress_bar.empty()
             status_text.empty()
 
-            # ── Result image ─────────────────────────────────────────────────
+            # ── Result image ──────────────────────────────────────────────────
             with right:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
                 st.markdown("#### ✅ Translated Image")
-                st.image(result_img, caption="Translated → English", use_container_width=True)
+                st.image(result_img, caption="Translated → English",
+                         use_container_width=True)
 
                 result_bytes = img_to_bytes(result_img)
                 st.download_button(
@@ -652,7 +722,7 @@ def main():
             with st.expander("Show traceback"):
                 st.exception(exc)
 
-    # ── Footer ───────────────────────────────────────────────────────────────
+    # ── Footer ────────────────────────────────────────────────────────────────
     st.markdown("""
     <div style="text-align:center;padding:2rem 0 .8rem;
          color:#1e293b;font-size:.72rem;letter-spacing:.04em;">
