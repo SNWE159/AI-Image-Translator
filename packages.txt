@@ -1,13 +1,7 @@
-# packages.txt  –  System-level apt packages installed before pip
-# Required on Streamlit Community Cloud (Debian/Ubuntu base image)
-
-# OpenCV headless needs these shared libs at runtime
 libgl1
 libglib2.0-0
 libsm6
 libxext6
 libxrender1
 libgomp1
-
-# DejaVu fonts (provides DejaVuSans-Bold.ttf for text rendering)
 fonts-dejavu-core
