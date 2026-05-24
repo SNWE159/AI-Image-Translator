@@ -186,11 +186,10 @@ LANG_NAMES = {
     "es": "Spanish",    "fr": "French",     "de": "German",
     "it": "Italian",    "pt": "Portuguese", "nl": "Dutch",
     "ja": "Japanese",   "ko": "Korean",     "ar": "Arabic",
-    "ch_sim": "Chinese",
 }
 
 # EasyOCR language codes to load (keep list small to save memory on free tier)
-OCR_LANGS = ["en", "es", "fr", "de", "it", "pt", "nl", "ja", "ko", "ar", "ch_sim"]
+OCR_LANGS = ["en", "es", "fr", "de", "it", "pt", "nl", "ja", "ko", "ar"]
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FONT  ─ download DejaVu Bold once into /tmp (writable on Streamlit Cloud)
