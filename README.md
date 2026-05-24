@@ -1,4 +1,4 @@
-# 🌍 TourTranslate AI
+# 🌍 TravelLens AI
 
 ## 🧠 AI-Powered Tourist Image Text Translator
 
