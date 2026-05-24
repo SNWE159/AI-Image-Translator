@@ -1,0 +1,30 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# requirements.txt  –  AI Image Language Translator
+# Pinned for Streamlit Community Cloud (Python 3.11, CPU-only, Linux x86-64)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── UI ────────────────────────────────────────────────────────────────────────
+streamlit>=1.35.0,<2.0.0
+
+# ── OCR ───────────────────────────────────────────────────────────────────────
+easyocr>=1.7.1
+
+# ── Translation ───────────────────────────────────────────────────────────────
+deep-translator>=1.11.4
+
+# ── Image processing ──────────────────────────────────────────────────────────
+# Use headless build: no GUI dependencies (Qt, GTK, etc.)
+opencv-python-headless>=4.9.0.80
+Pillow>=10.3.0
+
+# ── Numerics ──────────────────────────────────────────────────────────────────
+numpy>=1.26.0,<2.0.0
+
+# ── PyTorch CPU  (EasyOCR backend) ────────────────────────────────────────────
+# Streamlit Cloud does NOT have a GPU.
+# Specifying the CPU-only wheel keeps the slug size ~1 GB smaller.
+# The --extra-index-url is handled via .streamlit/config.toml (pip section) or
+# added here as a comment for manual install:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+torch>=2.2.0
+torchvision>=0.17.0
