@@ -541,9 +541,9 @@ def main():
     # ── Hero header ──────────────────────────────────────────────────────────
     st.markdown("""
     <div class="hero-header">
-        <div class="hero-title">🌐 AI Image Language Translator</div>
+        <div class="hero-title">🌐 TravelLens AI</div>
         <div class="hero-subtitle">
-            Detect · Translate · Replace &nbsp;—&nbsp; No training · No paid APIs
+            Detect · Translate · Replace &nbsp; &nbsp;
         </div>
     </div>""", unsafe_allow_html=True)
 
