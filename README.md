@@ -69,8 +69,7 @@ TourTranslate AI supports translation from:
 - Portuguese 🇵🇹  
 - Dutch 🇳🇱  
 - Japanese 🇯🇵  
-- Korean 🇰🇷  
-- Sinhala 🇱🇰  
+- Korean 🇰🇷   
 - Arabic 🇸🇦  
 
 ➡️ All translated into English
